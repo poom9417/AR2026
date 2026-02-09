@@ -1,0 +1,894 @@
+﻿<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>รายงานลูกหนี้คงค้าง (AR Dashboard)</title>
+    
+    <!-- Libraries -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Plugins -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        body { font-family: 'Sarabun', sans-serif; background-color: #f3f4f6; }
+        .card { background: white; border-radius: 16px; box-shadow: 0 4px 20px -5px rgba(0, 0, 0, 0.1); padding: 24px; }
+        .stat-icon { width: 50px; height: 50px; display: flex; align-items: center; justify-content: center; border-radius: 50%; }
+        .table-container::-webkit-scrollbar { height: 8px; width: 8px; }
+        .table-container::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        .table-container::-webkit-scrollbar-track { background: #f1f5f9; }
+        #loading-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255,255,255,0.9); z-index: 2000;
+            display: none; flex-direction: column; justify-content: center; align-items: center;
+        }
+        .hidden { display: none !important; }
+        /* File Input Styling */
+        .file-drop-area {
+            border: 2px dashed #cbd5e1;
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            transition: all 0.3s;
+            background-color: #f8fafc;
+            cursor: pointer;
+        }
+        .file-drop-area:hover { border-color: #3b82f6; background-color: #eff6ff; }
+        
+        /* Table Styles */
+        .table-pivot th, .table-pivot td { border: 1px solid #e2e8f0; padding: 10px; font-size: 0.85rem; }
+        .table-pivot thead th { background-color: #f8fafc; font-weight: 600; text-align: center; color: #475569; position: sticky; top: 0; z-index: 10; }
+        .row-remark-total { background-color: #eff6ff; font-weight: bold; color: #1e40af; border-top: 2px solid #bfdbfe; }
+        .row-remark-header { background-color: #f1f5f9; font-weight: 700; color: #334155; }
+        
+        /* Table A23 Styles */
+        .table-a23 th, .table-a23 td { border: 1px solid #e2e8f0; padding: 8px; font-size: 0.85rem; vertical-align: middle; }
+        .table-a23 thead th { background-color: #f8fafc; font-weight: 600; text-align: center; color: #475569; }
+        
+        .status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; }
+        .dot-red { background-color: #ef4444; }
+        .dot-green { background-color: #10b981; }
+        .dot-yellow { background-color: #facc15; }
+        .bg-col-prev { background-color: #f0f9ff; }
+        .bg-col-prev-total { background-color: #e0f2fe; font-weight: bold; color: #0369a1; }
+        .bg-col-curr { background-color: #fff7ed; }
+        .bg-col-curr-total { background-color: #ffedd5; font-weight: bold; color: #c2410c; }
+        .row-subtotal { background-color: #f1f5f9; font-weight: 700; border-top: 1px solid #cbd5e1; color: #334155; }
+        .row-total { background-color: #e2e8f0; font-weight: 800; border-top: 2px solid #64748b; font-size: 0.9rem; color: #1e293b; }
+        .faint-arrow { opacity: 0.15; font-size: 2rem; color: #64748b; transform: translateX(5px); }
+        .text-negative { color: #dc2626; } 
+
+        /* Filter Styles */
+        select option:disabled {
+            color: #cbd5e1;
+            background-color: #f8fafc;
+        }
+        .active-tag {
+            background-color: #eff6ff;
+            color: #1e40af;
+            border: 1px solid #bfdbfe;
+            padding: 4px 12px;
+            border-radius: 9999px;
+            font-size: 0.85rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+        }
+        .active-tag:hover {
+            background-color: #dbeafe;
+        }
+        .active-tag button {
+            color: #60a5fa;
+            cursor: pointer;
+            padding: 2px;
+            border-radius: 50%;
+        }
+        .active-tag button:hover {
+            background-color: #bfdbfe;
+            color: #1e3a8a;
+        }
+    </style>
+</head>
+<body class="text-slate-800">
+
+    <!-- Loading Overlay -->
+    <div id="loading-overlay">
+        <i class="fa-solid fa-circle-notch fa-spin text-5xl text-blue-600 mb-4"></i>
+        <p class="text-xl font-bold text-slate-700" id="loading-text">กำลังประมวลผล...</p>
+    </div>
+
+    <!-- Navbar -->
+    <nav class="bg-white shadow-sm sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center">
+                    <i class="fa-solid fa-chart-pie text-blue-600 text-2xl mr-3"></i>
+                    <span class="font-bold text-xl text-slate-700 ml-2">AR Dashboard</span>
+                </div>
+                <div class="flex items-center space-x-3">
+                    <!-- Mode Toggle Button -->
+                    <button id="btn-toggle-mode" onclick="toggleMode()" class="bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 px-4 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center">
+                        <i class="fa-solid fa-code-compare mr-2"></i> โหมดเปรียบเทียบรายงาน
+                    </button>
+
+                    <span id="update-time" class="text-xs text-gray-500 hidden md:block border-l pl-3 ml-2">ข้อมูล: Mock Data</span>
+                    
+                    <!-- Main Upload Button -->
+                    <label class="cursor-pointer bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center shadow-md">
+                        <i class="fa-solid fa-folder-open mr-2"></i> เลือกไฟล์ CSV
+                        <input type="file" id="csvInput" accept=".csv" class="hidden" />
+                    </label>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
+        <!-- Common Filters -->
+        <section id="common-filters" class="mb-8">
+            <div class="card bg-white p-6 rounded-xl shadow-sm border border-slate-100">
+                <div class="flex items-center justify-between mb-2">
+                    <h2 class="text-lg font-semibold text-slate-700"><i class="fa-solid fa-filter mr-2"></i>ตัวกรองข้อมูล (Filters)</h2>
+                    <button onclick="resetFilters(false)" class="text-sm text-red-500 hover:text-red-700 font-medium hover:underline transition-colors">
+                        <i class="fa-solid fa-rotate-right mr-1"></i> ล้างค่าทั้งหมด
+                    </button>
+                </div>
+
+                <!-- Active Filter Tags Display -->
+                <div id="active-filters-container" class="flex flex-wrap gap-2 mb-4 min-h-[2rem]">
+                    <!-- Tags will be injected here -->
+                    <span class="text-sm text-gray-400 italic py-1">แสดงผลข้อมูลทั้งหมด (ยังไม่มีการกรอง)</span>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div><label class="block text-sm font-medium text-slate-600 mb-1">ปีงบประมาณ</label><select id="filter-fiscalYear" class="w-full border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-200 focus:border-blue-400 transition-all"><option value="all">ทั้งหมด</option></select></div>
+                    <div><label class="block text-sm font-medium text-slate-600 mb-1">ประเภทผู้ป่วย</label><select id="filter-patientType" class="w-full border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-200 focus:border-blue-400 transition-all"><option value="all">ทั้งหมด</option></select></div>
+                    <div><label class="block text-sm font-medium text-slate-600 mb-1">สิทธิการรักษา</label><select id="filter-privilege" class="w-full border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-200 focus:border-blue-400 transition-all"><option value="all">ทั้งหมด</option></select></div>
+                    <div><label class="block text-sm font-medium text-slate-600 mb-1">Status Name Group</label><select id="filter-statusGroup" class="w-full border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-200 focus:border-blue-400 transition-all"><option value="all">ทั้งหมด</option></select></div>
+                    <div><label class="block text-sm font-medium text-slate-600 mb-1">Status Name</label><select id="filter-statusName" class="w-full border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-200 focus:border-blue-400 transition-all"><option value="all">ทั้งหมด</option></select></div>
+                    <div><label class="block text-sm font-medium text-slate-600 mb-1">Remark</label><select id="filter-remark" class="w-full border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-blue-200 focus:border-blue-400 transition-all"><option value="all">ทั้งหมด</option></select></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ======================= STANDARD MODE ======================= -->
+        <div id="view-standard">
+            <!-- KPI Cards -->
+            <section class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+                <div class="card border-l-4 border-blue-500 flex items-center justify-between">
+                    <div><p class="text-sm text-gray-500 mb-1">ยอดลูกหนี้คงค้างรวม</p><h3 class="text-2xl font-bold text-slate-800" id="kpi-total-amount">0.00</h3></div>
+                    <div class="stat-icon bg-blue-100 text-blue-600"><i class="fa-solid fa-coins text-xl"></i></div>
+                </div>
+                <div class="card border-l-4 border-green-500 flex items-center justify-between">
+                    <div><p class="text-sm text-gray-500 mb-1">จำนวนลูกหนี้รวม (ราย)</p><h3 class="text-2xl font-bold text-slate-800" id="kpi-total-cases">0</h3></div>
+                    <div class="stat-icon bg-green-100 text-green-600"><i class="fa-solid fa-users text-xl"></i></div>
+                </div>
+                <div class="card border-l-4 border-orange-500 flex items-center justify-between">
+                    <div><p class="text-sm text-gray-500 mb-1">สถานะสูงสุด</p><h3 class="text-lg font-bold text-slate-800 truncate w-40" id="kpi-top-status">-</h3><p class="text-xs text-gray-400" id="kpi-top-status-amt"></p></div>
+                    <div class="stat-icon bg-orange-100 text-orange-600"><i class="fa-solid fa-tag text-xl"></i></div>
+                </div>
+            </section>
+
+            <!-- Year Chart -->
+            <section class="mb-8">
+                <div class="card">
+                    <h3 class="text-lg font-semibold mb-4 text-slate-700">ยอดลูกหนี้แยกตามปีงบประมาณ (Fiscal Year)</h3>
+                    <div class="relative h-72">
+                        <canvas id="chartYear"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Standard Charts -->
+            <section class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                <div class="card">
+                    <h3 class="text-lg font-semibold mb-4 text-slate-700">ยอดลูกหนี้แยกตามสิทธิ (5 อันดับแรก)</h3>
+                    <div class="relative h-72">
+                        <canvas id="chartPrivilege"></canvas>
+                    </div>
+                </div>
+                <div class="card">
+                    <h3 class="text-lg font-semibold mb-4 text-slate-700">สัดส่วนตามกลุ่มสถานะ</h3>
+                    <div class="relative h-72 flex justify-center">
+                        <canvas id="chartStatusGroup"></canvas>
+                    </div>
+                </div>
+            </section>
+            
+            <!-- Pivot Table 1: Remark > Status -->
+            <section class="card mb-8">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-semibold text-slate-700">สรุปยอดตามสถานะ (Remark > Status Name)</h3>
+                </div>
+                <div id="pivot-table-container" class="overflow-x-auto table-container max-h-[600px] p-2">
+                    <table class="table-pivot w-full divide-y divide-gray-200 border-collapse bg-white">
+                        <thead id="table-head-pivot"></thead>
+                        <tbody id="table-body-pivot" class="bg-white"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Pivot Table 2: Main Status (A01, A35, Z06, Others) -->
+            <section class="card mb-8">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-semibold text-slate-700">สรุปยอดตามสถานะหลัก</h3>
+                </div>
+                <div id="main-status-table-container" class="overflow-x-auto table-container max-h-[600px] p-2">
+                    <table class="table-pivot w-full divide-y divide-gray-200 border-collapse bg-white">
+                        <thead id="table-head-main-status"></thead>
+                        <tbody id="table-body-main-status" class="bg-white"></tbody>
+                    </table>
+                </div>
+                <div class="text-xs text-gray-500 mt-2 p-2 bg-gray-50 rounded">
+                    <span class="font-bold">หมายเหตุ:</span> ช่อง "ก่อน 2568" รวมยอดจากปีงบประมาณ 2567 และปีก่อนหน้าทั้งหมด
+                </div>
+            </section>
+
+        </div>
+
+        <!-- ======================= COMPARISON MODE ======================= -->
+        <div id="view-comparison" class="hidden">
+            
+            <!-- Step 1: Selection -->
+            <div id="comp-step-select" class="card bg-indigo-50 border border-indigo-100 p-8 rounded-xl text-center">
+                <h2 class="text-2xl font-bold text-indigo-900 mb-2">เปรียบเทียบข้อมูลรายงาน</h2>
+                <p class="text-indigo-600 mb-8">อัปโหลดไฟล์รายงาน 2 ฉบับ เพื่อนำมาเปรียบเทียบหาความเปลี่ยนแปลง</p>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+                    <!-- File A -->
+                    <div class="bg-white p-6 rounded-xl shadow-sm border-2 border-transparent hover:border-blue-400 transition-colors">
+                        <div class="bg-blue-100 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600 text-xl font-bold">A</div>
+                        <h3 class="font-bold text-gray-800 mb-2">ไฟล์ก่อนหน้า (Previous)</h3>
+                        <label class="file-drop-area block">
+                            <span class="text-sm text-gray-500 block mb-1" id="file-a-name">ยังไม่ได้เลือกไฟล์</span>
+                            <span class="text-xs text-blue-600 font-semibold">คลิกเพื่อเลือกไฟล์ CSV</span>
+                            <input type="file" id="input-file-a" accept=".csv" class="hidden" onchange="updateFileName(this, 'file-a-name')">
+                        </label>
+                    </div>
+                    <!-- File B -->
+                    <div class="bg-white p-6 rounded-xl shadow-sm border-2 border-transparent hover:border-orange-400 transition-colors">
+                        <div class="bg-orange-100 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4 text-orange-600 text-xl font-bold">B</div>
+                        <h3 class="font-bold text-gray-800 mb-2">ไฟล์ปัจจุบัน (Current)</h3>
+                        <label class="file-drop-area block">
+                            <span class="text-sm text-gray-500 block mb-1" id="file-b-name">ยังไม่ได้เลือกไฟล์</span>
+                            <span class="text-xs text-orange-600 font-semibold">คลิกเพื่อเลือกไฟล์ CSV</span>
+                            <input type="file" id="input-file-b" accept=".csv" class="hidden" onchange="updateFileName(this, 'file-b-name')">
+                        </label>
+                    </div>
+                </div>
+                <div class="mt-8">
+                    <button onclick="startComparison()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-3 rounded-full font-bold text-lg shadow-lg hover:shadow-xl transition-all transform hover:scale-105">
+                        <i class="fa-solid fa-bolt mr-2"></i> ประมวลผลเปรียบเทียบ
+                    </button>
+                </div>
+            </div>
+
+            <!-- Step 2: Result Dashboard -->
+            <div id="comp-step-result" class="hidden">
+                <!-- Header -->
+                <div class="bg-gradient-to-r from-slate-800 to-slate-700 text-white p-6 rounded-xl shadow-md mb-6 flex flex-col md:flex-row justify-between items-center">
+                    <div>
+                        <h3 class="text-xl font-bold mb-1"><i class="fa-solid fa-code-compare mr-2"></i>ผลการเปรียบเทียบ</h3>
+                        <p class="text-sm text-slate-300 opacity-90">
+                            <span class="bg-blue-600 px-2 py-0.5 rounded text-xs mr-2">ก่อนหน้า: <span id="lbl-file-a">...</span></span> 
+                            <i class="fa-solid fa-arrow-right text-xs mx-1"></i> 
+                            <span class="bg-orange-500 px-2 py-0.5 rounded text-xs ml-2">ปัจจุบัน: <span id="lbl-file-b">...</span></span>
+                        </p>
+                    </div>
+                    <button onclick="resetComparison()" class="mt-4 md:mt-0 bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-lg text-sm transition-colors border border-white/30">
+                        <i class="fa-solid fa-rotate-left mr-1"></i> เปรียบเทียบใหม่
+                    </button>
+                </div>
+
+                <!-- Big Summaries -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                    <div class="card border border-gray-200 relative overflow-hidden">
+                        <h4 class="text-sm text-gray-500 font-semibold mb-4 text-center">ยอดลูกหนี้รวม (Total Amount)</h4>
+                        <div class="flex items-center justify-center space-x-8 relative z-10">
+                            <div class="text-right"><p class="text-xs text-gray-400">ก่อนหน้า</p><p class="text-xl font-bold text-gray-700" id="res-amt-a">0</p></div>
+                            <div class="flex flex-col items-center">
+                                <i class="fa-solid fa-arrow-right-long faint-arrow"></i>
+                            </div>
+                            <div class="text-left"><p class="text-xs text-gray-400">ปัจจุบัน</p><p class="text-xl font-bold text-gray-700" id="res-amt-b">0</p></div>
+                        </div>
+                        <div class="mt-4 text-center"><span id="res-amt-badge" class="px-4 py-1.5 rounded-full text-sm font-bold bg-gray-100 flex items-center justify-center w-fit mx-auto">...</span></div>
+                    </div>
+                    <div class="card border border-gray-200 relative overflow-hidden">
+                        <h4 class="text-sm text-gray-500 font-semibold mb-4 text-center">จำนวนราย (Total Cases)</h4>
+                        <div class="flex items-center justify-center space-x-8 relative z-10">
+                            <div class="text-right"><p class="text-xs text-gray-400">ก่อนหน้า</p><p class="text-xl font-bold text-gray-700" id="res-cnt-a">0</p></div>
+                            <div class="flex flex-col items-center">
+                                <i class="fa-solid fa-arrow-right-long faint-arrow"></i>
+                            </div>
+                            <div class="text-left"><p class="text-xs text-gray-400">ปัจจุบัน</p><p class="text-xl font-bold text-gray-700" id="res-cnt-b">0</p></div>
+                        </div>
+                        <div class="mt-4 text-center"><span id="res-cnt-badge" class="px-4 py-1.5 rounded-full text-sm font-bold bg-gray-100 flex items-center justify-center w-fit mx-auto">...</span></div>
+                    </div>
+                </div>
+
+                <!-- Charts -->
+                <section class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                    <div class="card">
+                        <h3 class="text-lg font-semibold mb-4 text-slate-700">เปรียบเทียบ: ยอดลูกหนี้แยกตามสิทธิ</h3>
+                        <div class="relative h-80">
+                            <canvas id="compChartPrivilege"></canvas>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h3 class="text-lg font-semibold mb-4 text-slate-700">เปรียบเทียบ: ยอดลูกหนี้แยกตามกลุ่มสถานะ</h3>
+                        <div class="relative h-80">
+                            <canvas id="compChartGroup"></canvas>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Comparison Year Chart -->
+                <section class="mb-8">
+                    <div class="card">
+                        <h3 class="text-lg font-semibold mb-4 text-slate-700">เปรียบเทียบ: ยอดลูกหนี้แยกตามปีงบประมาณ</h3>
+                        <div class="relative h-80">
+                            <canvas id="compChartYear"></canvas>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- A23 Table -->
+                <section class="mb-8">
+                    <div class="card overflow-hidden">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-lg font-semibold text-slate-700">ตารางข้อมูลตามสิทธิ</h3>
+                        </div>
+                        <!-- ID Added for Capture -->
+                        <div id="table-a23-container" class="overflow-x-auto table-container p-2 bg-white">
+                            <table class="table-a23 w-full border-collapse">
+                                <thead id="table-a23-head"></thead>
+                                <tbody id="table-a23-body"></tbody>
+                            </table>
+                        </div>
+                        <div class="text-xs text-gray-500 mt-3 p-2 bg-gray-50 rounded">
+                            <span class="font-bold">หมายเหตุ:</span> ช่อง "ก่อน 2568" รวมยอดจากปีงบประมาณ 2567 และปีก่อนหน้าทั้งหมด
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </div>
+
+    </main>
+
+    <script>
+        let mainData = [], currentData = [], isComparisonMode = false;
+        let compDataA = { name: '', data: [] }, compDataB = { name: '', data: [] }; 
+        const COLOR_PALETTE = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899', '#6366f1', '#14b8a6', '#f97316', '#06b6d4'];
+        
+        // Define filters and their display names for tags
+        const filterKeys = ['fiscalYear', 'patientType', 'privilege', 'statusGroup', 'statusName', 'remark'];
+        const filterLabels = {
+            'fiscalYear': 'ปีงบประมาณ',
+            'patientType': 'ประเภทผู้ป่วย',
+            'privilege': 'สิทธิ',
+            'statusGroup': 'กลุ่มสถานะ',
+            'statusName': 'ชื่อสถานะ',
+            'remark': 'หมายเหตุ'
+        };
+
+        document.addEventListener('DOMContentLoaded', () => {
+            if(window.ChartDataLabels) Chart.register(ChartDataLabels);
+            mainData = generateMockData(200); currentData = [...mainData]; 
+            initFilters(); 
+            // Trigger initial UI update
+            handleFilterChange();
+            
+            filterKeys.forEach(id => {
+                const el = document.getElementById(`filter-${id}`); if (el) el.addEventListener('change', handleFilterChange);
+            });
+            const mainInput = document.getElementById('csvInput'); if (mainInput) mainInput.addEventListener('change', handleMainFileUpload);
+        });
+
+        function toggleMode() {
+            isComparisonMode = !isComparisonMode;
+            const btn = document.getElementById('btn-toggle-mode');
+            const viewStd = document.getElementById('view-standard'), viewComp = document.getElementById('view-comparison'), filters = document.getElementById('common-filters');
+            if (isComparisonMode) {
+                btn.innerHTML = '<i class="fa-solid fa-arrow-left mr-2"></i> กลับสู่หน้าหลัก';
+                btn.className = "bg-gray-100 text-gray-700 hover:bg-gray-200 border border-gray-300 px-4 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center";
+                viewStd.classList.add('hidden'); viewComp.classList.remove('hidden');
+                if(document.getElementById('comp-step-result').classList.contains('hidden')) filters.classList.add('hidden');
+                resetComparison();
+            } else {
+                btn.innerHTML = '<i class="fa-solid fa-code-compare mr-2"></i> โหมดเปรียบเทียบรายงาน';
+                btn.className = "bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 px-4 py-2 rounded-lg text-sm font-semibold transition-colors flex items-center";
+                viewStd.classList.remove('hidden'); viewComp.classList.add('hidden'); filters.classList.remove('hidden');
+                resetFilters(false);
+            }
+        }
+
+        function resetComparison() {
+            document.getElementById('comp-step-select').classList.remove('hidden');
+            document.getElementById('comp-step-result').classList.add('hidden');
+            document.getElementById('common-filters').classList.add('hidden');
+            document.getElementById('input-file-a').value = ''; document.getElementById('input-file-b').value = '';
+            document.getElementById('file-a-name').textContent = 'ยังไม่ได้เลือกไฟล์'; document.getElementById('file-b-name').textContent = 'ยังไม่ได้เลือกไฟล์';
+            compDataA = { name: '', data: [] }; compDataB = { name: '', data: [] };
+        }
+
+        function updateFileName(input, labelId) {
+            const label = document.getElementById(labelId);
+            if (input.files.length > 0) { label.textContent = input.files[0].name; label.classList.add('text-green-600', 'font-bold'); } 
+            else { label.textContent = 'ยังไม่ได้เลือกไฟล์'; label.classList.remove('text-green-600', 'font-bold'); }
+        }
+
+        async function startComparison() {
+            const inputA = document.getElementById('input-file-a'), inputB = document.getElementById('input-file-b');
+            if (!inputA.files[0] || !inputB.files[0]) { alert("กรุณาเลือกไฟล์ทั้งสองครับ"); return; }
+            const overlay = document.getElementById('loading-overlay'); overlay.style.display = 'flex';
+            try {
+                const [resA, resB] = await Promise.all([readCSVFile(inputA.files[0]), readCSVFile(inputB.files[0])]);
+                compDataA = { name: inputA.files[0].name, data: resA }; compDataB = { name: inputB.files[0].name, data: resB };
+                // In comparison mode, init filters using combined data
+                populateFilters([...resA, ...resB]); 
+                // Set default to render initial state
+                renderComparisonResult();
+                // Also update dynamic filters for comparison context
+                updateDynamicFilters(getFilterValues(), [...resA, ...resB]);
+
+                document.getElementById('comp-step-select').classList.add('hidden'); document.getElementById('comp-step-result').classList.remove('hidden'); document.getElementById('common-filters').classList.remove('hidden');
+            } catch (err) { alert("เกิดข้อผิดพลาด: " + err.message); } finally { overlay.style.display = 'none'; }
+        }
+
+        function renderComparisonResult() {
+            document.getElementById('lbl-file-a').textContent = compDataA.name; document.getElementById('lbl-file-b').textContent = compDataB.name;
+            const filters = getFilterValues();
+            const filteredA = filterData(compDataA.data, filters), filteredB = filterData(compDataB.data, filters);
+            const sumA = filteredA.reduce((s, i) => s + i.amount, 0), sumB = filteredB.reduce((s, i) => s + i.amount, 0);
+            const cntA = filteredA.reduce((s, i) => s + i.count, 0), cntB = filteredB.reduce((s, i) => s + i.count, 0);
+            updateSummaryCard('res-amt', sumA, sumB, true); updateSummaryCard('res-cnt', cntA, cntB, false);
+            renderCompChart('compChartPrivilege', 'privilege', filteredA, filteredB, "ก่อนหน้า", "ปัจจุบัน");
+            renderCompChart('compChartGroup', 'statusGroup', filteredA, filteredB, "ก่อนหน้า", "ปัจจุบัน");
+            renderCompChart('compChartYear', 'fiscalYear', filteredA, filteredB, "ก่อนหน้า", "ปัจจุบัน");
+            renderTableA23(filteredA, filteredB);
+        }
+
+        function updateSummaryCard(prefix, valA, valB, isCurrency) {
+            const diff = valB - valA, pct = valA > 0 ? (diff / valA) * 100 : 0;
+            document.getElementById(`${prefix}-a`).textContent = isCurrency ? formatCurrency(valA) : formatNumber(valA);
+            document.getElementById(`${prefix}-b`).textContent = isCurrency ? formatCurrency(valB) : formatNumber(valB);
+            const badge = document.getElementById(`${prefix}-badge`);
+            if (diff > 0) { 
+                badge.className = "px-4 py-1.5 rounded-full text-sm font-bold bg-red-50 text-red-700 border border-red-100"; 
+                badge.innerHTML = `<i class="fa-solid fa-caret-up mr-2"></i>+${formatNumber(diff)} (${formatNumber(pct.toFixed(2))}%)`; 
+            } else if (diff < 0) { 
+                badge.className = "px-4 py-1.5 rounded-full text-sm font-bold bg-green-50 text-green-700 border border-green-100"; 
+                badge.innerHTML = `<i class="fa-solid fa-caret-down mr-2"></i>${formatNumber(diff)} (${formatNumber(Math.abs(pct).toFixed(2))}%)`; 
+            } else { 
+                badge.className = "px-4 py-1.5 rounded-full text-sm font-bold bg-gray-50 text-gray-600 border border-gray-100"; 
+                badge.innerHTML = "เท่าเดิม"; 
+            }
+        }
+
+        function renderTableA23(dataA, dataB) {
+            const thead = document.getElementById('table-a23-head'), tbody = document.getElementById('table-a23-body');
+            const nameA = document.getElementById('lbl-file-a').textContent, nameB = document.getElementById('lbl-file-b').textContent;
+            
+            thead.innerHTML = `<tr><th rowspan="2" class="w-48 bg-slate-100 border">สิทธิ (Privilege)</th><th rowspan="2" class="w-24 bg-slate-100 border">ประเภท</th><th colspan="4" class="bg-blue-100 text-blue-800 border border-blue-200">เดือนก่อน</th><th colspan="4" class="bg-orange-100 text-orange-800 border border-orange-200">ปัจจุบัน</th><th rowspan="2" class="w-32 bg-slate-100 border">การเปลี่ยนแปลง</th></tr><tr><th class="text-xs text-blue-700 bg-blue-50 border border-blue-200">2569</th><th class="text-xs text-blue-700 bg-blue-50 border border-blue-200">2568</th><th class="text-xs text-blue-700 bg-blue-50 border border-blue-200">ก่อน 2568</th><th class="text-xs text-blue-900 bg-blue-200 border border-blue-300 font-bold">รวม</th><th class="text-xs text-orange-700 bg-orange-50 border border-orange-200">2569</th><th class="text-xs text-orange-700 bg-orange-50 border border-orange-200">2568</th><th class="text-xs text-orange-700 bg-orange-50 border border-orange-200">ก่อน 2568</th><th class="text-xs text-orange-900 bg-orange-200 border border-orange-300 font-bold">รวม</th></tr>`;
+            tbody.innerHTML = '';
+
+            const rowDefs = [
+                { id: 'ggo', label: 'ข้าราชการ (GGO)', filter: (p) => p && p.includes('GGO') },
+                { id: 'lgo', label: 'อปท. (LGO)', filter: (p) => p && p.includes('LGO') },
+                { id: 'uc', label: 'สปสช. (ONHSI)', filter: (p) => p && p.includes('ONHSI') },
+                { id: 'sss', label: 'ประกันสังคม', filter: (p) => p && (p.includes('ISSI') || p.includes('OSSI')) },
+                { id: 'oth', label: 'อื่นๆ (Others)', filter: (p) => p && !p.includes('GGO') && !p.includes('LGO') && !p.includes('ONHSI') && !p.includes('ISSI') && !p.includes('OSSI') }
+            ];
+            
+            const types = ['OPD', 'IPD'];
+            let gtA_26=0, gtA_25=0, gtA_Pre=0, gtA_Tot=0, gtB_26=0, gtB_25=0, gtB_Pre=0, gtB_Tot=0, gtDiff=0;
+
+            rowDefs.forEach(rowDef => {
+                let pA_26=0, pA_25=0, pA_Pre=0, pA_Tot=0, pB_26=0, pB_25=0, pB_Pre=0, pB_Tot=0, pDiff=0;
+                types.forEach((type, idx) => {
+                    const tr = document.createElement('tr');
+                    if(idx === 0) tr.innerHTML = `<td rowspan="3" class="font-bold bg-white align-middle border-b-2 border-slate-200">${rowDef.label}</td>`;
+                    tr.innerHTML += `<td class="text-center font-medium border text-xs text-gray-500">${type}</td>`;
+
+                    const sum = (ds, yc) => ds.filter(d => rowDef.filter(d.privilege) && d.patientType.toUpperCase()===type && yc(parseInt(d.fiscalYear)||0)).reduce((s,i)=>s+i.amount,0);
+                    const y26 = y => y===2569||y===2026; const y25 = y => y===2568||y===2025; const yPre = y => (y>0) && ((y>2400 && y<2568) || (y<2400 && y<2025));
+
+                    const vA26 = sum(dataA, y26); const vA25 = sum(dataA, y25); const vAPre = sum(dataA, yPre); const tA = vA26+vA25+vAPre;
+                    const vB26 = sum(dataB, y26); const vB25 = sum(dataB, y25); const vBPre = sum(dataB, yPre); const tB = vB26+vB25+vBPre;
+                    const df = tB - tA;
+
+                    pA_26+=vA26; pA_25+=vA25; pA_Pre+=vAPre; pA_Tot+=tA; pB_26+=vB26; pB_25+=vB25; pB_Pre+=vBPre; pB_Tot+=tB; pDiff+=df;
+                    gtA_26+=vA26; gtA_25+=vA25; gtA_Pre+=vAPre; gtA_Tot+=tA; gtB_26+=vB26; gtB_25+=vB25; gtB_Pre+=vBPre; gtB_Tot+=tB; gtDiff+=df;
+
+                    tr.innerHTML += `<td class="text-right text-blue-700 bg-col-prev border-blue-100">${formatCurrency(vA26)}</td><td class="text-right text-blue-700 bg-col-prev border-blue-100">${formatCurrency(vA25)}</td><td class="text-right text-blue-700 bg-col-prev border-blue-100">${formatCurrency(vAPre)}</td><td class="text-right text-blue-900 bg-col-prev-total border-blue-200">${formatCurrency(tA)}</td><td class="text-right text-orange-700 bg-col-curr border-orange-100">${formatCurrency(vB26)}</td><td class="text-right text-orange-700 bg-col-curr border-orange-100">${formatCurrency(vB25)}</td><td class="text-right text-orange-700 bg-col-curr border-orange-100">${formatCurrency(vBPre)}</td><td class="text-right text-orange-900 bg-col-curr-total border-orange-200">${formatCurrency(tB)}</td>`;
+                    let dot = 'dot-yellow'; if(df > 0.01) dot = 'dot-red'; else if(df < -0.01) dot = 'dot-green';
+                    tr.innerHTML += `<td class="text-center font-bold border"><div class="flex items-center justify-end"><span class="status-dot ${dot} shrink-0"></span><span>${formatCurrency(Math.abs(df))}</span></div></td>`;
+                    tbody.appendChild(tr);
+                });
+                const trP = document.createElement('tr'); trP.className = 'row-subtotal';
+                trP.innerHTML = `<td class="text-center border-b-2 border-slate-200 text-xs">รวม</td><td class="text-right border-blue-100 bg-blue-50/50 text-blue-800 border-b-2">${formatCurrency(pA_26)}</td><td class="text-right border-blue-100 bg-blue-50/50 text-blue-800 border-b-2">${formatCurrency(pA_25)}</td><td class="text-right border-blue-100 bg-blue-50/50 text-blue-800 border-b-2">${formatCurrency(pA_Pre)}</td><td class="text-right border-blue-200 bg-blue-100 text-blue-900 font-bold border-b-2">${formatCurrency(pA_Tot)}</td><td class="text-right border-orange-100 bg-orange-50/50 text-orange-800 border-b-2">${formatCurrency(pB_26)}</td><td class="text-right border-orange-100 bg-orange-50/50 text-orange-800 border-b-2">${formatCurrency(pB_25)}</td><td class="text-right border-orange-100 bg-orange-50/50 text-orange-800 border-b-2">${formatCurrency(pB_Pre)}</td><td class="text-right border-orange-200 bg-orange-100 text-orange-900 font-bold border-b-2">${formatCurrency(pB_Tot)}</td><td class="text-center font-bold border-b-2 border-slate-200"><div class="flex items-center justify-end"><span class="status-dot ${pDiff>0.01?'dot-red':(pDiff<-0.01?'dot-green':'dot-yellow')} shrink-0"></span><span>${formatCurrency(Math.abs(pDiff))}</span></div></td>`;
+                tbody.appendChild(trP);
+            });
+            const trTotal = document.createElement('tr'); trTotal.className = 'row-total';
+            trTotal.innerHTML = `<td colspan="2" class="text-center bg-gray-200 border-gray-300">รวมทั้งสิ้น (Grand Total)</td><td class="text-right bg-blue-100 text-blue-900 border-blue-300">${formatCurrency(gtA_26)}</td><td class="text-right bg-blue-100 text-blue-900 border-blue-300">${formatCurrency(gtA_25)}</td><td class="text-right bg-blue-100 text-blue-900 border-blue-300">${formatCurrency(gtA_Pre)}</td><td class="text-right bg-blue-200 text-blue-900 border-blue-400">${formatCurrency(gtA_Tot)}</td><td class="text-right bg-orange-100 text-orange-900 border-orange-300">${formatCurrency(gtB_26)}</td><td class="text-right bg-orange-100 text-orange-900 border-orange-300">${formatCurrency(gtB_25)}</td><td class="text-right bg-orange-100 text-orange-900 border-orange-300">${formatCurrency(gtB_Pre)}</td><td class="text-right bg-orange-200 text-orange-900 border-orange-400">${formatCurrency(gtB_Tot)}</td><td class="text-right bg-gray-200 text-gray-900 border-gray-400"><div class="flex items-center justify-end"><span class="status-dot ${gtDiff>0.01?'dot-red':(gtDiff<-0.01?'dot-green':'dot-yellow')} shrink-0"></span><span>${formatCurrency(Math.abs(gtDiff))}</span></div></td>`;
+            tbody.appendChild(trTotal);
+        }
+
+        // --- Main Controller Functions ---
+        function handleMainFileUpload(event) {
+            const file = event.target.files[0]; if (!file) return;
+            const overlay = document.getElementById('loading-overlay'); overlay.style.display = 'flex';
+            Papa.parse(file, {
+                header: true, skipEmptyLines: true,
+                complete: (results) => {
+                    if (results.data.length > 0) {
+                        mainData = processCSVData(results.data); currentData = [...mainData];
+                        document.getElementById('update-time').textContent = `ข้อมูล: ${file.name}`;
+                        initFilters(); 
+                        handleFilterChange(); // Update UI
+                    }
+                    overlay.style.display = 'none';
+                }
+            });
+        }
+
+        function readCSVFile(file) {
+            return new Promise((resolve) => Papa.parse(file, { header: true, skipEmptyLines: true, complete: (r) => resolve(r.data.length ? processCSVData(r.data) : []) }));
+        }
+
+        function processCSVData(rawData) {
+            const keys = { fy: ['FYDDate','ปีงบประมาณ','Year'], pt: ['Ref.key 1','ประเภทผู้ป่วย'], pv: ['Ref.key 2','สิทธิ'], sg: ['Status Name Group'], sn: ['Status Name'], rm: ['Remark'], amt: ['Amount','จำนวนเงิน'], cnt: ['count','Count'] };
+            const getVal = (r, kList) => { for(let k of kList) if(r[k]!==undefined) return r[k]; return '-'; };
+            const parseYear = (v) => { if(!v || v==='-') return '-'; if(String(v).includes('/')) return String(v).split('/').find(s=>s.length===4)||v; return v; };
+            return rawData.map(r => ({
+                fiscalYear: parseYear(getVal(r, keys.fy)), patientType: getVal(r, keys.pt), privilege: getVal(r, keys.pv),
+                statusGroup: getVal(r, keys.sg), statusName: getVal(r, keys.sn), remark: getVal(r, keys.rm),
+                amount: parseFloat(String(getVal(r, keys.amt)).replace(/,/g,''))||0, count: parseFloat(String(getVal(r, keys.cnt)).replace(/,/g,''))||1
+            }));
+        }
+
+        let charts = {};
+        function renderCompChart(id, k, dA, dB, lA, lB) {
+            if(charts[id]) charts[id].destroy(); const ctx=document.getElementById(id).getContext('2d');
+            const agg=(d)=>{const r={};d.forEach(i=>r[i[k]]=(r[i[k]]||0)+i.amount);return r;};
+            const aA=agg(dA), aB=agg(dB);
+            let ks=[...new Set([...Object.keys(aA),...Object.keys(aB)])];
+            
+            // ถ้าเป็นปีงบประมาณ ให้เรียงจาก ใหม่ -> เก่า (descending)
+            if (k === 'fiscalYear') {
+                ks.sort().reverse();
+            } else {
+                ks.sort();
+            }
+
+            charts[id]=new Chart(ctx,{type:'bar',data:{labels:ks,datasets:[{label:lA,data:ks.map(i=>aA[i]||0),backgroundColor:'#3b82f6'},{label:lB,data:ks.map(i=>aB[i]||0),backgroundColor:'#f97316'}]},
+            options:{responsive:true,maintainAspectRatio:false,plugins:{datalabels:{display:false}}}});
+        }
+        function renderStdChart(id, t, d, c, opts={}) {
+            if(charts[id]) charts[id].destroy(); const ctx=document.getElementById(id).getContext('2d');
+            charts[id]=new Chart(ctx,{type:t,data:{labels:d.map(x=>x[0]),datasets:[{label:'ยอดลูกหนี้',data:d.map(x=>x[1]),backgroundColor:c,borderWidth:1}]},
+            options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:t!=='bar'},datalabels:{display:false}},...opts}});
+        }
+        
+        function renderDashboard() {
+            updateKPIs();
+            const agg=(k)=>{const r={};currentData.forEach(i=>r[i[k]]=(r[i[k]]||0)+i.amount);return Object.entries(r).sort((a,b)=>b[1]-a[1]);};
+            renderStdChart('chartPrivilege','bar',agg('privilege').slice(0,5),'#3b82f6');
+            renderStdChart('chartStatusGroup','doughnut',agg('statusGroup'),COLOR_PALETTE);
+            // แก้ไขส่วน chartYear ให้เรียงจาก ใหม่ -> เก่า (sort แล้ว reverse)
+            renderStdChart('chartYear', 'bar', agg('fiscalYear').sort().reverse(), '#8b5cf6', {
+                layout: {
+                    padding: {
+                        top: 40 // เพิ่มพื้นที่ด้านบน 40px เพื่อไม่ให้ตัวเลขตกขอบ
+                    }
+                },
+                plugins: {
+        legend: { display: false },
+        datalabels: {
+            display: true,
+            anchor: 'end',
+            align: 'top',
+            formatter: (v) => formatCurrency(v),
+            font: { weight: 'bold' },
+            color: '#6b21a8'
+        }
+    }
+});
+            renderPivotTable();
+            renderMainStatusTable();
+        }
+
+        function renderPivotTable() {
+            const tbody = document.getElementById('table-body-pivot');
+            const thead = document.getElementById('table-head-pivot');
+            tbody.innerHTML = '';
+            thead.innerHTML = '';
+
+            const years = [...new Set(currentData.map(d => d.fiscalYear))].sort().reverse();
+            
+            const tree = {};
+            const remarkTotals = {};
+            
+            currentData.forEach(item => {
+                const r = item.remark || '-';
+                const n = item.statusName || '-';
+                const y = item.fiscalYear || '-';
+                const amt = item.amount;
+
+                if(!tree[r]) tree[r] = {};
+                if(!tree[r][n]) tree[r][n] = {};
+                
+                tree[r][n][y] = (tree[r][n][y] || 0) + amt;
+
+                if(!remarkTotals[r]) remarkTotals[r] = {};
+                remarkTotals[r][y] = (remarkTotals[r][y] || 0) + amt;
+            });
+
+            let headHtml = '<tr><th class="px-4 py-2 bg-slate-100 border text-left w-1/3">รายละเอียด (Remark > Status Name)</th>';
+            years.forEach(y => headHtml += `<th class="px-4 py-2 bg-slate-100 border text-right">${y}</th>`);
+            headHtml += '<th class="px-4 py-2 bg-slate-200 border text-right">รวมทั้งหมด</th></tr>';
+            thead.innerHTML = headHtml;
+
+            Object.keys(tree).sort().forEach(remark => {
+                let trHeader = document.createElement('tr');
+                trHeader.className = 'row-remark-header';
+                trHeader.innerHTML = `<td class="px-4 py-2 border" colspan="${years.length + 2}">${remark}</td>`;
+                tbody.appendChild(trHeader);
+
+                Object.keys(tree[remark]).sort().forEach(name => {
+                    let trN = document.createElement('tr');
+                    trN.className = 'hover:bg-gray-50';
+                    let nHtml = `<td class="px-4 py-2 border pl-8 text-sm text-gray-700">${name}</td>`;
+                    let grandTotalN = 0;
+                    
+                    years.forEach(y => {
+                        const val = tree[remark][name][y] || 0;
+                        grandTotalN += val;
+                        nHtml += `<td class="px-4 py-2 border text-right text-sm">${val !== 0 ? formatCurrency(val) : '-'}</td>`;
+                    });
+                    nHtml += `<td class="px-4 py-2 border text-right text-sm font-semibold">${formatCurrency(grandTotalN)}</td>`;
+                    
+                    trN.innerHTML = nHtml;
+                    tbody.appendChild(trN);
+                });
+
+                let trR = document.createElement('tr');
+                trR.className = 'row-remark-total';
+                let rowHtml = `<td class="px-4 py-2 border text-right">รวม (${remark})</td>`;
+                let grandTotalR = 0;
+                
+                years.forEach(y => {
+                    const val = remarkTotals[remark][y] || 0;
+                    grandTotalR += val;
+                    rowHtml += `<td class="px-4 py-2 border text-right">${formatCurrency(val)}</td>`;
+                });
+                rowHtml += `<td class="px-4 py-2 border text-right bg-blue-100">${formatCurrency(grandTotalR)}</td>`;
+                trR.innerHTML = rowHtml;
+                tbody.appendChild(trR);
+            });
+        }
+
+        function renderMainStatusTable() {
+            const tbody = document.getElementById('table-body-main-status');
+            const thead = document.getElementById('table-head-main-status');
+            tbody.innerHTML = '';
+            thead.innerHTML = '';
+
+            const categories = {
+                'A01': { label: 'A01 : รายได้เข้าไม่ครบ', filter: (s) => s.includes('A01') },
+                'A35': { label: 'A35 : ค่ารักษาพยาบาลเข้ามาหลังเรียกเก็บ', filter: (s) => s.includes('A35') },
+                'Z06': { label: 'Z06 : รายได้ทับซ้อน IPD/OPD', filter: (s) => s.includes('Z06') },
+                'Others': { label: 'อื่นๆ', filter: (s) => !s.includes('A01') && !s.includes('A35') && !s.includes('Z06') }
+            };
+
+            const groupedData = {};
+            Object.keys(categories).forEach(key => { groupedData[key] = { '2569': 0, '2568': 0, 'Pre': 0, 'Total': 0 }; });
+            const grandTotals = { '2569': 0, '2568': 0, 'Pre': 0, 'Total': 0 };
+
+            currentData.forEach(item => {
+                const status = item.statusName || '';
+                let year = parseInt(item.fiscalYear); if (isNaN(year)) year = 0;
+                const amt = item.amount;
+                
+                let key = 'Others';
+                for (const [catKey, catDef] of Object.entries(categories)) {
+                    if (catKey !== 'Others' && catDef.filter(status)) { key = catKey; break; }
+                }
+
+                if (year === 2569 || year === 2026) { groupedData[key]['2569'] += amt; grandTotals['2569'] += amt; }
+                else if (year === 2568 || year === 2025) { groupedData[key]['2568'] += amt; grandTotals['2568'] += amt; }
+                else if ((year > 0 && year < 2568 && year > 2400) || (year < 2025 && year > 0)) { groupedData[key]['Pre'] += amt; grandTotals['Pre'] += amt; }
+                
+                groupedData[key]['Total'] = groupedData[key]['2569'] + groupedData[key]['2568'] + groupedData[key]['Pre'];
+            });
+            
+            grandTotals['Total'] = grandTotals['2569'] + grandTotals['2568'] + grandTotals['Pre'];
+
+            let headHtml = `<tr><th class="px-4 py-2 bg-slate-100 border text-left w-1/3">สถานะหลัก</th><th class="px-4 py-2 bg-slate-100 border text-right">2569</th><th class="px-4 py-2 bg-slate-100 border text-right">2568</th><th class="px-4 py-2 bg-slate-100 border text-right">ก่อน 2568</th><th class="px-4 py-2 bg-slate-200 border text-right">รวมทั้งหมด</th></tr>`;
+            thead.innerHTML = headHtml;
+
+            Object.keys(categories).forEach(key => {
+                const tr = document.createElement('tr');
+                let rowHtml = `<td class="px-4 py-2 border font-medium text-sm">${categories[key].label}</td>`;
+                rowHtml += `<td class="px-4 py-2 border text-right text-sm">${formatNumber(groupedData[key]['2569'])}</td>`;
+                rowHtml += `<td class="px-4 py-2 border text-right text-sm">${formatNumber(groupedData[key]['2568'])}</td>`;
+                rowHtml += `<td class="px-4 py-2 border text-right text-sm">${formatNumber(groupedData[key]['Pre'])}</td>`;
+                rowHtml += `<td class="px-4 py-2 border text-right bg-blue-50 font-bold text-sm text-blue-900">${formatNumber(groupedData[key]['Total'])}</td>`;
+                tr.innerHTML = rowHtml;
+                tbody.appendChild(tr);
+            });
+
+            const trTotal = document.createElement('tr');
+            trTotal.className = 'row-total';
+            let totalHtml = `<td class="px-4 py-2 border text-center">รวมทั้งสิ้น</td>`;
+            totalHtml += `<td class="px-4 py-2 border text-right">${formatNumber(grandTotals['2569'])}</td>`;
+            totalHtml += `<td class="px-4 py-2 border text-right">${formatNumber(grandTotals['2568'])}</td>`;
+            totalHtml += `<td class="px-4 py-2 border text-right">${formatNumber(grandTotals['Pre'])}</td>`;
+            totalHtml += `<td class="px-4 py-2 border text-right bg-blue-100 text-blue-900">${formatNumber(grandTotals['Total'])}</td>`;
+            trTotal.innerHTML = totalHtml;
+            tbody.appendChild(trTotal);
+        }
+
+        function updateKPIs() {
+            const sum = currentData.reduce((a,b)=>a+b.amount,0);
+            const cnt = currentData.reduce((a,b)=>a+b.count,0);
+            const grps = {}; currentData.forEach(i => grps[i.statusName] = (grps[i.statusName]||0) + i.amount);
+            let top = '-', topVal = 0; if(Object.keys(grps).length){ top = Object.keys(grps).reduce((a,b)=>grps[a]>grps[b]?a:b); topVal = grps[top]; }
+            document.getElementById('kpi-total-amount').textContent = formatCurrency(sum);
+            document.getElementById('kpi-total-cases').textContent = formatNumber(cnt);
+            document.getElementById('kpi-top-status').textContent = top;
+            document.getElementById('kpi-top-status-amt').textContent = `(ยอด: ${formatCurrency(topVal)})`;
+        }
+
+        // --- IMPROVED FILTER LOGIC ---
+
+        function initFilters(){
+            populateFilters(mainData);
+        }
+
+        function populateFilters(d){
+            filterKeys.forEach(k => {
+                const s = document.getElementById(`filter-${k}`);
+                const currentVal = s.value;
+                s.innerHTML = '<option value="all">ทั้งหมด</option>';
+                [...new Set(d.map(i => i[k]))].sort().forEach(v => {
+                    const o = document.createElement('option');
+                    o.value = v; 
+                    o.text = v;
+                    s.appendChild(o);
+                });
+                if(s.querySelector(`option[value="${currentVal}"]`)) s.value = currentVal;
+            });
+        }
+
+        function handleFilterChange() {
+            const filters = getFilterValues();
+            
+            // 1. Filter Data
+            if(isComparisonMode) {
+                renderComparisonResult();
+                updateDynamicFilters(filters, [...compDataA.data, ...compDataB.data]);
+            } else {
+                currentData = filterData(mainData, filters);
+                renderDashboard();
+                updateDynamicFilters(filters, mainData);
+            }
+
+            // 2. Render Active Tags
+            renderActiveTags(filters);
+        }
+
+        function updateDynamicFilters(currentFilters, sourceData) {
+            filterKeys.forEach(targetKey => {
+                // Determine which options should be enabled for this specific filter (targetKey)
+                // logic: filter sourceData by ALL filters EXCEPT targetKey
+                const otherFilters = { ...currentFilters };
+                otherFilters[targetKey] = 'all'; 
+
+                const validDataForTarget = filterData(sourceData, otherFilters);
+                const validValues = new Set(validDataForTarget.map(item => item[targetKey]));
+
+                const selectEl = document.getElementById(`filter-${targetKey}`);
+                Array.from(selectEl.options).forEach(option => {
+                    if (option.value === 'all') return; // Always enabled
+                    
+                    if (validValues.has(option.value)) {
+                        option.disabled = false;
+                        option.style.color = ''; // Reset color
+                    } else {
+                        option.disabled = true;
+                        option.style.color = '#cbd5e1'; // Gray out
+                    }
+                });
+            });
+        }
+
+        function renderActiveTags(filters) {
+            const container = document.getElementById('active-filters-container');
+            container.innerHTML = '';
+            
+            let hasFilter = false;
+            Object.entries(filters).forEach(([key, value]) => {
+                if (value !== 'all') {
+                    hasFilter = true;
+                    const tag = document.createElement('span');
+                    tag.className = 'active-tag';
+                    tag.innerHTML = `
+                        <span class="font-semibold text-xs text-blue-800">${filterLabels[key]}:</span> 
+                        <span class="text-blue-600">${value}</span>
+                        <button onclick="clearSingleFilter('${key}')" class="hover:bg-blue-200 rounded-full w-5 h-5 flex items-center justify-center transition-colors">
+                            <i class="fa-solid fa-times text-xs"></i>
+                        </button>
+                    `;
+                    container.appendChild(tag);
+                }
+            });
+
+            if (!hasFilter) {
+                container.innerHTML = '<span class="text-sm text-gray-400 italic py-1 pl-1">แสดงผลข้อมูลทั้งหมด (ยังไม่มีการกรอง)</span>';
+            }
+        }
+
+        function clearSingleFilter(key) {
+            const el = document.getElementById(`filter-${key}`);
+            if (el) {
+                el.value = 'all';
+                handleFilterChange();
+            }
+        }
+
+        function getFilterValues(){const f={}; filterKeys.forEach(k=>f[k]=document.getElementById(`filter-${k}`).value); return f;}
+        function filterData(d,f){return d.filter(i=>Object.keys(f).every(k=>f[k]==='all'||i[k]==f[k]));}
+        
+        function resetFilters(r){
+            filterKeys.forEach(k=>document.getElementById(`filter-${k}`).value='all');
+            if(isComparisonMode) {
+                renderComparisonResult();
+                updateDynamicFilters(getFilterValues(), [...compDataA.data, ...compDataB.data]);
+            } else {
+                currentData=[...mainData];
+                renderDashboard();
+                updateDynamicFilters(getFilterValues(), mainData);
+            }
+            renderActiveTags(getFilterValues());
+        }
+
+        function generateMockData(c){
+            const y=['2567','2568','2569'],t=['OPD','IPD'],p=['GGO','LGO','ONHSI','Self Pay'], s = ['A01 : รายได้เข้าไม่ครบ', 'A35 : ค่ารักษาพยาบาลเข้ามาหลังเรียกเก็บ', 'Z06 : รายได้ทับซ้อน IPD/OPD', 'B01 : อื่นๆ', 'Pending'];
+            const remarks = ['ปกติ', 'เร่งด่วน', 'รอตรวจสอบ'];
+            let d=[];
+            for(let i=0;i<c;i++){
+                // Logic to create correlated data so filtering is obvious
+                // e.g. 'Pending' only appears in 2568/2569
+                const year = y[Math.floor(Math.random()*y.length)];
+                let status = s[Math.floor(Math.random()*s.length)];
+                
+                // Make some correlations for testing dynamic filters
+                if (status === 'Pending' && year === '2567') status = 'A01 : รายได้เข้าไม่ครบ'; 
+
+                d.push({
+                    fiscalYear: year,
+                    patientType: t[i%2],
+                    privilege: p[i%4],
+                    statusGroup: status === 'Pending' ? 'ค้างชำระ (Pending)' : 'ปิดบัญชีแล้ว',
+                    statusName: status,
+                    remark: remarks[Math.floor(Math.random() * remarks.length)],
+                    amount: Math.floor(Math.random()*100000),
+                    count: 1
+                });
+            }
+            return d;
+        }
+
+        function formatNumber(n){return n.toLocaleString('th-TH',{minimumFractionDigits:0,maximumFractionDigits:2});}
+        function formatCurrency(n){return n.toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2});}
+    </script>
+</body>
+</html>
